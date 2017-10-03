@@ -1,0 +1,674 @@
+---
+title: "Some Multivariate stuff"
+author: "Ron Sarafian"
+date: "7/18/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Used libraries:
+
+```{r, message = F, warning = F}
+library(MASS)
+library(rrcov)
+library(psych)
+library(ggplot2)
+library(knitr)
+```
+
+# Multivariate normal distribution
+
+Assume we have knowlege aboute the parameters of some multivariate normal distribution. e.g: 
+
+```{r}
+parameters <- read.csv("Parameters.csv", header = F)
+Mu <- as.matrix(parameters[ ,1])
+Sigma <- as.matrix(parameters[ ,-1])
+colnames(Sigma) <- rownames(Sigma) <- 1:10
+Mu
+Sigma
+```
+
+## Sampling Multivariate normal data
+
+Two approach are presented: 
+
+1. Use `mvnorm` form `MASS` library.
+
+2. Manually (iteratively), using theory on conditional distribution
+
+```{r}
+# option 1:
+set.seed(256)
+Samples1 <- mvrnorm(200, mu = Mu, Sigma = Sigma)
+
+# option 2:
+set.seed(256)
+nsamples <- 200
+p <- nrow(Sigma)
+
+Samples2 <- matrix(nrow = nsamples,
+                   ncol = p)
+
+for (n in 1:nsamples) {
+        
+        y <- numeric(p)
+        y[1] <- rnorm(1, mean = Mu[1], sd = sqrt(Sigma[1,1]))
+
+   for (i in 2:p){
+        
+        sigma11 <- Sigma[1:(i-1),1:(i-1)]
+        sigma12 <- Sigma[1:(i-1), i]
+        sigma21 <- Sigma[i, 1:(i-1)]
+        sigma22 <- Sigma[i, i]
+        
+        yi <- rnorm(1,
+            mean = Mu[i] + t(sigma21) %*% solve(sigma11) %*% (y[1:(i-1)] - Mu[1:(i-1)]),
+            sd = sqrt(sigma22 - sigma21 %*% solve(sigma11) %*% sigma12))
+        
+        y[i] <- yi
+        
+        }
+     Samples2[n, ] <- y
+}
+```
+
+## Estimators
+
+The obvious estimates for the expectation vector $\mu$ and for the variance-covariance matrix $\Sigma$ may be simply the vector of means $\bar{x}$ and the estimated variance-covariance matrix $S$:
+
+```{r}
+(Muhat <- colMeans(Samples1))
+S <- cov(Samples1)
+image(S)
+```
+
+
+------------------------------------------------------------------------
+
+## Testing
+
+Assume we want to test the following null hypothesis:
+
+$$ H_0: \mu = 0; H_1: else$$
+
+First we test manually. We would like to caculate Hotteling's $T^2$:
+
+```{r}
+Mu0 <- matrix(0, nrow = 10)
+
+T2 <- nsamples * t(Muhat - Mu0) %*% solve(S) %*% (Muhat - Mu0)
+c <- (p*(nsamples-1))/(nsamples-p)
+Fstat <- qf(p = 0.95, df1 = p, df2 = nsamples - p)
+
+T2 > c * Fstat
+```
+
+the statistic $T^2$ is greater than the critical value. hence, we reject the null hypothesis
+
+Another way is to use the `T2.test` from `rrcov` library:
+
+```{r}
+T2.test(Samples1)
+```
+
+We get the same results.
+
+### Estimating the power of the test
+
+To estimate the power we use 100 repeats of this test. Each time we sample 200 multivariate normal vector with the specified parameters.
+
+```{r}
+Mu <- matrix(1, nrow = 10)
+
+c <- (p*(nsamples-1))/(nsamples-p)
+Fstat <- qf(p = 0.95, df1 = p, df2 = nsamples - p)
+
+success <- numeric(100)
+
+for (r in 1:100) {
+        
+        smp <- mvrnorm(200, mu = Mu, Sigma = Sigma)
+        T2 <- T2.test(smp)$statistic[1]
+        
+        success[r] <- T2 > c * Fstat
+}
+
+p1 <- mean(success)
+```
+
+The power is `r p1`
+
+------------------------------------------------------------------------
+
+## More complicated hypothesis testing
+
+Now we test the null hypothesis:
+
+$$ H_0: \mu_1 = \mu_2 = \mu_3, \mu_4 = \mu_5 ; H_1: else $$
+
+We will define the matrix `A` as:
+
+```{r}
+(A <- matrix(c(1,-1, 0, 0, 0,
+               0, 1,-1, 0, 0,
+               0, 0, 0, 1,-1), 
+             byrow = T, nrow = 3, ncol = 5))
+```
+
+and:
+$$ Y_i \sim \mathcal{N}(A\mu_{1:5}, A\Sigma_{1:5} A^T) $$
+
+now we can write the null hypothesis as:
+
+$$ H_0: A\mu_{1:5} = 0; H1: else $$
+
+```{r}
+Y <- Samples1[ , 1:5] %*% t(A)
+T2.test(Y, mu = 0)
+```
+
+We can see that the hypothesis $H_0: A\mu_{1:5} = 0$ is rejected, and so does 
+$H_0: \mu_1 = \mu_2 = \mu_3, \mu_4 = \mu_5$ 
+
+### Testing the covariance parameters
+
+Assume we have some parameters:
+
+```{r}
+(Mu <- matrix(c(0,1,0), nrow = 3))
+(Sigma <- matrix(c(4,1,1,1,9,2,1,2,16), nrow = 3, ncol = 3))
+```
+
+we sample some data using the same procedure discribed above.
+
+```{r}
+set.seed(111)
+
+nsamples <- 100
+p <- nrow(Sigma)
+
+Samples3 <- matrix(nrow = nsamples,
+                   ncol = p)
+
+for (n in 1:nsamples) {
+        
+        y <- numeric(p)
+        y[1] <- rnorm(1, mean = Mu[1], sd = sqrt(Sigma[1,1]))
+
+   for (i in 2:p){
+        
+        sigma11 <- Sigma[1:(i-1),1:(i-1)]
+        sigma12 <- Sigma[1:(i-1), i]
+        sigma21 <- Sigma[i, 1:(i-1)]
+        sigma22 <- Sigma[i, i]
+        
+        yi <- rnorm(1,
+            mean = Mu[i] + t(sigma21) %*% solve(sigma11) %*% (y[1:(i-1)] - Mu[1:(i-1)]),
+            sd = sqrt(sigma22 - sigma21 %*% solve(sigma11) %*% sigma12))
+        
+        y[i] <- yi
+        
+        }
+     Samples3[n, ] <- y
+}
+```
+
+We want to test the following null hypothes
+
+$$ H_0: \Sigma = \begin{bmatrix}
+4 & 0 & 0 \\
+0 & 9 & 0 \\
+0 & 0 & 16 \\
+\end{bmatrix}; H_1: else$$
+
+We will execute the LIkelihood-ratio test. i.e:
+$$\frac{\max_{\theta \in \Theta} L(\theta)}
+        {\max_{\theta \in \Theta_0} L(\theta)}$$
+
+The Likelyhood function is:
+$$ L(\mu, \Sigma) = |\Sigma|^{-n/2}
+        e^{-1/2 \sum_{i=1}^n{
+        (x_i-\mu)^T\Sigma^{-1}(x_i-\mu)}}$$ 
+
+We knoe that the best estimators for $\theta = [\mu, \Sigma]$ are $[\bar{Y}, S]$
+
+```{r}
+(Ybar <- apply(Samples3, 2, mean))
+(S <- cov(Samples3))
+```
+
+Now, we define the matrix $R$ as:
+
+$$R = S_0^{-\frac{1}{2}} S S_0^{-\frac{1}{2}} $$ 
+where $S_0$ is the estimated $\Sigma$ only with zeroes outside the diagonal
+
+```{r}
+S0 <- diag(diag(S))
+R <- (solve(S0))^0.5 %*% S %*% (solve(S0))^0.5 
+```
+
+it can be shown that the generalized Likelyhood ratio is equal to:
+
+$$\frac{L(\bar{Y},S)}{L(\bar{Y},S_0)} =
+\frac{|S|^{-n/2}}{|S_0|^{-n/2}} = 
+|S_0^{-1/2}SS_0^{-1/2}|^{-n/2} = 
+|R|^{-n/2} $$
+
+Hence, the test statistic is:
+
+$$2\log(|R|^{-n/2}) \sim{\chi^2_3} $$
+```{r}
+(logLratio <- -nsamples * log(det(R)))
+(chistat <- qchisq(p = 0.95,df = 3))
+
+logLratio > chistat
+```
+
+------------------------------------------------------------------------
+
+## Likeyhood ratio
+
+Assume we know that some variable $x$ is standard normal distributed:
+
+$$ x \sim \mathcal{N}(\mu, I) $$
+and we have the null hypothesis:
+
+$$ H_0: \mu = \begin{bmatrix} 0 \\ 0 \end{bmatrix} ; H_1: else $$
+
+The Likelyhood function is:
+
+$$ L(\mu, I) = |I|^{-n/2}
+        e^{-1/2 \sum_{i=1}^n 
+        \begin{bmatrix} x_{i1} - \mu_1 & x_{i2} - \mu_2 \end{bmatrix}
+        \begin{bmatrix} x_{i1} - \mu_1 \\ x_{i2} - \mu_2 \end{bmatrix}} $$ 
+
+subsetting the null hypothesis and using $\bar{x_i}$ as the estimator for $\mu$, the generalized Likelihood ratio is:
+
+$$ \Lambda =  \frac{L(I,\begin{bmatrix} \bar{x_1} \\ \bar{x_2} \end{bmatrix})}
+        {L(I,\begin{bmatrix} 0 \\ 0 \end{bmatrix})} $$
+$$ =    \frac{e^{-\frac{1}{2} \sum_{i=1}^{n} (x_{1i}-\bar{x_1})^2 + (x_{2i}-\bar{x_2})^2}}
+        {e^{-\frac{1}{2} \sum_{i=1}^{n} x_{1i}^2 + x_{2i}^2}} = $$
+$$ =    e^{-\frac{n}{2} (\bar{x_1}^2+\bar{x_2}^2) +
+    \bar{x_1}\sum\limits_{i=1}^n x_{1i} +
+    \bar{x_2}\sum\limits_{i=1}^n x_{2i}} = \\
+    e^{\frac{n}{2}(\bar{x_1}^2+\bar{x_2}^2)} $$
+    
+Now, computing $2\log(\Lambda)$, and since we know that 
+$\sqrt{n}\bar{x_j} \sim{\mathcal{N}(\sqrt{n}\mu_j,\sigma^2)}$. According to $H_0$, $\mu_0 = 0$ and $\sigma^2 = 1$, hence we get:
+$$ 2\log(\Lambda) = (\sqrt{n}\bar{x_1})^2+(\sqrt{n}\bar{x_2})^2 = Z_1^2 + Z_2^2 $$
+which is exactly the definition of $chi^2_2 $
+where $Z_i$ are iid standard normal variables.
+
+According to $\chi^2$ CDF in the special case of 2 degrees of freedom:
+$$ Pr(\chi^2_2 > c)= 
+   e^{-\frac{c}{2}} $$
+
+
+### Uknown covariance matrix
+
+we use matrix notations: $x = \begin{bmatrix} x_1 \\ x_2 \end{bmatrix}$ etc.
+
+When $\sigma^2$ is unknown the Likelihood ratio is:
+
+$$  \frac{L(S,\hat{\mu})}{L(S_0,0)} = 
+        \frac{|S|^{-n/2}e^{-\frac{1}{2} \sum_{i=1}^n 
+        (x - \mu)^T S^{-1} (x - \mu)}}
+        {|S_0|^{-n/2}e^{-\frac{1}{2} \sum_{i=1}^n 
+        (x - \mu_0)^T S_0^{-1} (x - \mu_0)}} $$ 
+
+First, lets look at the estimators to $\Sigma$ under $H_1$ and $H_0$:
+
+from the maximum likelihood solution we get:
+
+$$ S =  \frac{1}{n}(\sum_{i=1}^n (x_{i}-\bar{x})^T(x_{i}-\bar{x}))I $$
+
+and under $H_0$:
+
+$$ S_0 = \frac{1}{n}\sum_{i=1}^n x_i^Tx_iI $$ 
+
+Now, using some trace tricks: 
+
+$$ \sum_{i=1}^n (x_i-\bar{x})^T S^{-1} (x_i-\bar{x}) = \\
+Trace(\sum_{i=1}^n (x_i-\bar{x})^T S^{-1} (x_i-\bar{x})) = \\
+Trace(S^{-1} S n) = \\
+n Trace(I) = np$$ 
+
+and in the same way:
+
+$$ \sum_{i=1}^n (x_i-1)^T S_0^{-1} (x_i-1) = np $$
+
+with this insight both exponents in the Likelihood ratio are collapsed to $e^{-\frac{1}{2} 2n}$, hence the Likelihood ratio is equal to:
+
+$$ \frac{L(S,\hat{\mu})}
+        {L(S_0,0)} = 
+   \frac{|S|^{-\frac{n}{2}}}
+        {|S_0|^{-\frac{n}{2}}} =
+   (\frac{|S|}{|S_0|})^{-\frac{n}{2}} $$
+
+subsetting the estimators (using determinante rule: $|aA| = a^p|A|$ we get:
+
+$$  \frac{|S|}{|S_0|}^{-\frac{n}{2}} =
+(\frac{\sum_{i=1}^n (x_{i}-\bar{x})^T(x_{i}-\bar{x})}
+     {\sum_{i=1}^n x_i^Tx_i})^{-\frac{2n}{2}} $$
+
+With some manipulations:
+
+$$ = (\frac{\sum_{i=1}^n (x_i - \bar{x})^T(x_i - \bar{x}) +
+                n\bar{x}^T\bar{x}}
+      {\sum_{i=1}^n (x_i - \bar{x})^T(x_i - \bar{x})})^{-n} $$
+      
+$$ = (1 + n\frac{(\bar{x}-0)^T(\bar{x}-0)}
+{\sum_{i=1}^n (x_i - \bar{x})^T(x_i - \bar{x})})^{-n} $$
+        
+$$  = (1+n(\bar{x}-0)^T\frac{1}{n}S^{-1}(\bar{x}-0))^{-n}$$
+wich is equal to:    
+
+$$ = (1+\frac{T^2}{n})^n $$
+
+And the Log Likelihood ratio is:
+
+$$ \Lambda = n\log(1+\frac{T^2}{n}) \cong T^2  $$
+------------------------------------------------------------------------
+
+## Testing with two populations
+
+assume we have some data from two independent populations:
+
+```{r read}
+dataall <- read.csv("dataall.csv")
+head(dataall)
+
+grp <- dataall$grp
+grp0 <- which(grp==0)
+smpls <- dataall[ , -1]
+smpl1 <- smpls[grp0, ]
+smpl2 <- smpls[-grp0, ]
+```
+
+Maximum Likelihood estimators for $\mu$ and $Sigma$ are the vector of means $\hat{\mu}$ and the estimated covariance matrix $S$:
+
+```{r q1}
+mu1_hat <- colMeans(smpl1)
+mu2_hat <- colMeans(smpl2)
+
+S1 <- cov(smpl1)
+S2 <- cov(smpl2)
+```
+
+
+Defining the samples as $X_1$ and $X_2$. We assume:
+
+$$      X_1 \sim \mathcal{N_{10}}(\mu_1, \Sigma) \\
+        X_2 \sim \mathcal{N_{10}}(\mu_2, \Sigma) $$
+
+The null hypothesis:
+
+$$      H_0: \mu_1 = \mu_2 ;\ H_1: else $$
+
+Some preliminaries:
+
+```{r q2.1}
+p <- ncol(smpls)
+n <- nrow(smpls)
+n1 <- nrow(smpl1)
+n2 <- nrow(smpl2)
+
+c <- (n1+n2-p-1)/(p*(n1+n2-2))
+```
+
+We use the pooled covariance estimats and calculate the $T^2$ statistic:
+
+```{r q2.2}
+Spooled <- ((n1-1) * S1 + (n2-1) * S2) / (n1+n2-2)
+T2 <- (t(mu1_hat-mu2_hat) %*% solve(Spooled) %*% (mu1_hat-mu2_hat)) / (1/n1+1/n2)
+
+(statistic <- c * T2)
+(critic <- qf(p = 0.95, df1 = p, df2 = n1+n2-p-1))
+```
+
+The test statistic is $c(p,n_1,n_2)T^2 =$ `r statistic` and is F distributed, the critical value is $F_{p,n_1+n_2-p-1} =$ `r critic`.
+
+It can be seen that the null hypothesis of equal expectation vectors in both populations is rejectedd.
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+# Linear Discriminant Analysis (LDA)
+
+Suppose that $\mu_1 = 0;\ \mu_2 = 1$ and covariance matrix is identical in both populations
+
+Suppose we want a classification rule. 
+
+We would take a classification rule whic corespond the likelihood ratio, that is:
+
+$$      i^* = argmax\{f_i(x)\} \\ for \ i = 1,2 $$
+Where $f_i(x)$ is the density function.
+
+We start by assuming the same covariance for both population (LDA)
+
+Covariance estimation: we use again the pooled covariance matrix $S_{pooled}$, this time with known expected values.
+
+```{r q3.1}
+mu1 <- matrix(0,p,1)
+mu2 <- matrix(1,p,1)
+
+cov.mu <- function(X, mu){
+        n <- dim(X)[1]
+        p <- dim(X)[2]
+        sum.cov <- matrix(0,p,p)
+        for (i in 1:n) {
+        x <- t(X[i, ]-mu)
+        sum.cov <- sum.cov + x %*% t(x)
+        }
+        sum.cov/n
+}
+
+S1.mu <- cov.mu(smpl1,mu1)
+S2.mu <- cov.mu(smpl2,mu2)
+
+Spooled.mu <- (n1 * S1.mu + n2 * S2.mu) / (n1+n2)
+```
+
+Under the assumed assumptions (specficaly, common covariance) the likelihood ratio is:
+$$\frac{f_1(x)}{f_2(x)} = 
+        \frac   {e^{-\frac{1}{2}(x-\mu_1)^T \Sigma^{-1}(x-\mu_1)}}
+                {e^{-\frac{1}{2}(x-\mu_2)^T \Sigma^{-1}(x-\mu_2)}} = \\
+        e^{     (\mu_1-\mu_2)^T
+                \Sigma^{-1}x
+                -\frac{1}{2}(\mu_1+\mu_2)^T
+                \Sigma^{-1}(\mu_1-\mu_2)}$$
+
+and the LDA rule classies to "1" if:
+$$(\mu_1-\mu_2)^T S^{-1}x >
+        \frac{1}{2}(\mu_1+\mu_2)^T
+        S^{-1}(\mu_1-\mu_2)$$ 
+
+where $S$ is the estimated $S_{pooled}$ under: $\mu_1=0;\ \mu_1=1$ 
+
+Classifing observations based on this rule:
+
+```{r q3.3} 
+pred <- numeric(n)
+for (i in 1:length(pred)) {
+        x <- t(smpls[i, ])
+        LHS <- t(mu1-mu2) %*% solve(Spooled.mu) %*% x
+        RHS <- 0.5 * t(mu1+mu2) %*% solve(Spooled.mu) %*% (mu1-mu2)
+        pred[i] <- ifelse(LHS>RHS, 0, 1)
+}
+```
+
+classification rate:
+```{r}
+mean(pred == grp)
+```
+
+\newpage
+
+### More LDA
+
+assume the following data:
+
+```{r}
+(mu1 <- matrix(c(0,0),2))
+(mu2 <- matrix(c(1,0),2))
+(mu3 <- matrix(c(0,1),2))
+(Sigma <- matrix(c(1,0.8,0.8,1),2,2))
+```
+
+Sampling:
+
+Since all distributions have the same covariance matrix:
+
+```{r q6}
+set.seed(256)
+
+X <- rbind(mvrnorm(30,mu1,Sigma),
+           mvrnorm(30,mu2,Sigma),
+           mvrnorm(30,mu3,Sigma))
+group <- gl(3,30)
+
+fi <- function(x, mui) exp(-0.5 * t(x-mui)^T %*% solve(Sigma) %*% (x-mui))
+
+n <- length(group)
+pred <- numeric(n)
+for (i in 1:n) {
+        liklyhoods <- c(fi(X[i,],mu1),
+                        fi(X[i,],mu2),
+                        fi(X[i,],mu3))
+        pred[i] <- which(liklyhoods == max(liklyhoods))
+}
+```
+
+Classification rate:
+```{r}
+mean(pred == group)
+```
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+# Factor Analysis
+
+assume we estimated the following correlation matrix
+
+```{r}
+(R <- matrix(c(1,0.14,0.15,0.14,1,0.06,0.15,0.06,1),3,3))
+```
+
+we present two estimation methods for FA:
+
+## Principal Factor Analysis
+
+```{r}
+tol <- 1e-6
+
+p <- dim(R)[1]
+k <- 1
+
+return_Lambda <- function(psi){
+    psiM <- diag(1,p,p) * psi
+    A <- R - psiM
+    eig.val <- eigen(A)$values
+    eig.vec <- eigen(A)$vectors
+    Lambda <- matrix(NA,p,k)
+    for (i in 1:k) {Lambda[,i] <- sqrt(eig.val[i]) * eig.vec[,i]}
+    Lambda
+}
+
+# initial guess
+R_ <- abs(R)
+R_[R_==1] <- 0
+h2 <- apply(R_,1,max)
+psi0 <- diag(1,p,p) * (1-h2)
+
+diff <- tol+1
+while (diff > tol) {
+    Lambda0 <- return_Lambda(psi = psi0)
+    h2 <- rowSums(Lambda0^2)
+    psi <- 1-h2
+    Lambda <- return_Lambda(psi = psi)
+    diff <- norm(Lambda - Lambda0, type = "2")
+    psi0 <- psi
+}
+Lambda
+
+psi
+
+```
+
+------------------------------------------------------------------------
+
+## Principal MLE
+
+The log likelihood of multivariate normal distribution:
+
+$$l(\mu,\Sigma) = 
+    -\frac{n}{2}\ln{|\Sigma|} -
+    \frac{1}{2}\sum_{i=1}^n (x_i-\mu)^T \Sigma^{-1} (x_i-\mu) + \text{const} $$
+
+Rewrite it and following some trace tricks as well described in [K. G. Jöreskog (1967)][1], the log likelihood we would maximize is:
+
+$$ \propto 
+    -\frac{n}{2}\ln{|\Sigma|} 
+    -\frac{n}{2} \text{Trace} (\Sigma^{-1} S) $$
+    
+where $S = \sum_{i}^n (x_i-\mu) (x_i-\mu))^T$ is the estimated covariance. We assume here $S = R$ (results are up to rotation).
+
+Let us set $\Sigma = \Lambda \Lambda^T + \psi$
+
+Now, if $\psi$ is known than $\Lambda$ has closed form (only in the maximum value of the log likelihood), hnce it can be found analytically. Next, when $\Lambda$ is known than $\psi$ can be found numerically:
+
+$$\psi^* = \text{argmax}_\psi \{  l(\psi; \Lambda) = -\frac{n}{2}\ln{|\Lambda \Lambda^T + \psi|} 
+    -\frac{n}{2} \text{Trace} ((\Lambda \Lambda^T + \psi)^{-1} S) \}$$
+
+We will use the `fa` function from `psych` package. this function compute the loadings ($\Lambda$) and the specific variances ($\psi$) in this form when specifing: `fm = "ml"`.
+
+```{r}
+MLE_FA <- fa(r = R, fm = "ml")
+MLE_FA$loadings
+MLE_FA$uniquenesses
+```
+
+[1]: https://link.springer.com/article/10.1007/BF02289658
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+
+# EM Algorithem
+
+## algorithm for $\theta$
+
+```{r}
+df <- read.table("data33.csv", sep = ",")
+colnames(df) <- c("X","I")
+n <- dim(df)[1]
+
+sum_y_k <- sum(df$X[df$I==1])
+Ti <- df$X[df$I==0]
+
+theta_m1 <- function(theta_m){
+    2*n/
+        (sum_y_k + 
+             sum(Ti + (theta_m * Ti + 2) /
+                           (theta_m * (1 + theta_m * Ti)))
+        )
+}
+
+tol <- 10e-6
+theta0 <- 1
+diff <- tol + 1
+
+while (diff > tol){
+    theta1 <- theta_m1(theta0)
+    diff <- abs(theta1 - theta0)
+    theta0 <- theta1
+}
+
+cat("theta is", theta1)
+```
+
